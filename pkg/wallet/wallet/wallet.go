@@ -1,13 +1,14 @@
 package wallet
 
 import (
-	"blockchain-go/src/utils"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+
+	"github.com/iltommi1995/blockchain-go/pkg/utils"
 
 	"github.com/btcsuite/btcutil/base58"
 	"golang.org/x/crypto/ripemd160"

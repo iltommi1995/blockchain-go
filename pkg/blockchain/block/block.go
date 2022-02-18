@@ -1,11 +1,12 @@
 package block
 
 import (
-	"blockchain-go/src/blockchain/transaction"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction"
 )
 
 // Struct dei singoli blocchi

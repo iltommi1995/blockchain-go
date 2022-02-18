@@ -1,13 +1,14 @@
 package blockchain_server
 
 import (
-	"blockchain-go/src/blockchain/blockchain"
-	"blockchain-go/src/wallet/wallet"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
+
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/blockchain"
+	"github.com/iltommi1995/blockchain-go/pkg/wallet/wallet"
 )
 
 var cache map[string]*blockchain.Blockchain = make(map[string]*blockchain.Blockchain)

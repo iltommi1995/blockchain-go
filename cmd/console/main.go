@@ -1,5 +1,12 @@
 package main
 
+import (
+	"fmt"
+
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/blockchain"
+	"github.com/iltommi1995/blockchain-go/pkg/wallet/wallet"
+)
+
 /*
 func main() {
 	myBlockchainAddress := "my_blockchain_address"
@@ -34,7 +41,6 @@ func main() {
 }
 */
 
-/*
 func main() {
 	walletM := wallet.NewWallet()
 	walletA := wallet.NewWallet()
@@ -78,4 +84,3 @@ func main() {
 	fmt.Printf("M %.1f\n", blockchain.CalculateTotalAmount(walletM.BlockchainAddress()))
 
 }
-*/

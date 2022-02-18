@@ -1,9 +1,10 @@
 package main
 
 import (
-	"blockchain-go/src/wallet_server"
 	"flag"
 	"log"
+
+	"github.com/iltommi1995/blockchain-go/pkg/wallet_server"
 )
 
 func init() {

@@ -1,4 +1,4 @@
-module blockchain-go
+module github.com/iltommi1995/blockchain-go
 
 go 1.17
 

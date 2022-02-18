@@ -1,9 +1,6 @@
 package blockchain
 
 import (
-	"blockchain-go/src/blockchain/block"
-	"blockchain-go/src/blockchain/transaction"
-	"blockchain-go/src/utils"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/json"
@@ -11,6 +8,10 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/block"
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction"
+	"github.com/iltommi1995/blockchain-go/pkg/utils"
 )
 
 const (
