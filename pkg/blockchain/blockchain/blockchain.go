@@ -204,9 +204,25 @@ func (bc *Blockchain) CalculateTotalAmount(blockchainAddress string) float32 {
 	return totalAmount
 }
 
+// Metodo per verificare la signature di una transazione
+// Prende 3 parametri:
+// 1- Public Key del sender della transazione
+// 2- Signature generata dal sender attraverso la sua chiave privata
+// 3- La transazione firmata
+// Ritorna un bool
 func (bc *Blockchain) VerifyTransactionSignature(
-	senderPublicKey *ecdsa.PublicKey, s *utils.Signature, t *transaction.Transaction) bool {
+	senderPublicKey *ecdsa.PublicKey,
+	s *utils.Signature,
+	t *transaction.Transaction) bool {
+	// Faccio json della transazione
 	m, _ := json.Marshal(t)
+	// Calcolo l'hash del json della transazione
 	h := sha256.Sum256([]byte(m))
+	// Uso funzione della libreria ecdsa
+	// Devo passare:
+	// - chiave pubblica sender
+	// - hash transazione
+	// - R (da signature)
+	// - S (da signature)
 	return ecdsa.Verify(senderPublicKey, h[:], s.R, s.S)
 }

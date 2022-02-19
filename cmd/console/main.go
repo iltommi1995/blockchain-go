@@ -4,8 +4,11 @@ import (
 	"fmt"
 
 	"github.com/iltommi1995/blockchain-go/pkg/blockchain/blockchain"
+	"github.com/iltommi1995/blockchain-go/pkg/wallet/transaction"
 	"github.com/iltommi1995/blockchain-go/pkg/wallet/wallet"
 )
+
+// Main file per eseguire la blockchain in console
 
 /*
 func main() {
@@ -52,7 +55,7 @@ func main() {
 	// Primo blocco
 
 	// Wallet transaction
-	t := wallet.NewTransaction(walletA.PrivateKey(), walletA.PublicKey(), walletA.BlockchainAddress(), walletB.BlockchainAddress(), 1.0)
+	t := transaction.NewTransaction(walletA.PrivateKey(), walletA.PublicKey(), walletA.BlockchainAddress(), walletB.BlockchainAddress(), 1.0)
 
 	//  Blockchain node side
 
@@ -66,7 +69,7 @@ func main() {
 
 	// Secondo blocco
 
-	t2 := wallet.NewTransaction(walletC.PrivateKey(), walletC.PublicKey(), walletC.BlockchainAddress(), walletA.BlockchainAddress(), 2.0)
+	t2 := transaction.NewTransaction(walletC.PrivateKey(), walletC.PublicKey(), walletC.BlockchainAddress(), walletA.BlockchainAddress(), 2.0)
 
 	isAdded = blockchain.AddTransaction(walletC.BlockchainAddress(),
 		walletA.BlockchainAddress(), 2.0,

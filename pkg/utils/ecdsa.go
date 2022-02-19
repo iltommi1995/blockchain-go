@@ -13,6 +13,7 @@ type Signature struct {
 	S *big.Int
 }
 
+// to string della signature
 func (s *Signature) String() string {
 	return fmt.Sprintf("%x%x", s.R, s.S)
 }

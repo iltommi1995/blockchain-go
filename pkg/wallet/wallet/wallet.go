@@ -8,24 +8,30 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/iltommi1995/blockchain-go/pkg/utils"
-
 	"github.com/btcsuite/btcutil/base58"
 	"golang.org/x/crypto/ripemd160"
 )
 
+// Il wallet ha:
+// - private key
+// - public key
+// - blockchain address
 type Wallet struct {
 	privateKey        *ecdsa.PrivateKey
 	publicKey         *ecdsa.PublicKey
 	blockchainAddress string
 }
 
+// Funzione per creare nuovo wallet
 func NewWallet() *Wallet {
 	w := new(Wallet)
-
+	// Ottengo la private key randomica con la libreria ecdsa
 	privateKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-
 	w.privateKey = privateKey
+
+	// Passaggi per generare l'address:
+
+	// 1. Dalla private key ottengo la public key
 	w.publicKey = &w.privateKey.PublicKey
 
 	// Creare address
@@ -79,62 +85,35 @@ func (w *Wallet) PrivateKey() *ecdsa.PrivateKey {
 	return w.privateKey
 }
 
+// Getter di private key come string
 func (w *Wallet) PrivateKeyStr() string {
 	return fmt.Sprintf("%x", w.privateKey.D.Bytes())
 }
 
+// Getter di public key
 func (w *Wallet) PublicKey() *ecdsa.PublicKey {
 	return w.publicKey
 }
 
+// Getter di public key come string
 func (w *Wallet) PublicKeyStr() string {
 	return fmt.Sprintf("%x%x", w.publicKey.X.Bytes(), w.publicKey.Y.Bytes())
 }
 
+// Getter di blockchain address
 func (w *Wallet) BlockchainAddress() string {
 	return w.blockchainAddress
 }
 
-// TRANSAZIONI
-
-type Transaction struct {
-	senderPrivateKey           *ecdsa.PrivateKey
-	senderPublicKey            *ecdsa.PublicKey
-	senderBloackchainAddress   string
-	recipientBlockchainAddress string
-	value                      float32
-}
-
-func NewTransaction(senderPrivateKey *ecdsa.PrivateKey,
-	senderPublicKey *ecdsa.PublicKey,
-	senderBloackchainAddress string,
-	recipientBlockchainAddress string,
-	value float32) *Transaction {
-	return &Transaction{senderPrivateKey: senderPrivateKey,
-		senderPublicKey:            senderPublicKey,
-		senderBloackchainAddress:   senderBloackchainAddress,
-		recipientBlockchainAddress: recipientBlockchainAddress,
-		value:                      value}
-}
-
-func (t *Transaction) GenerateSignature() *utils.Signature {
-	// Vogliamo computare l'hash della transazione
-	m, _ := json.Marshal(t)
-	// Calcoliamo l'hash della transazione
-	h := sha256.Sum256([]byte(m))
-	// Generiamo la signature a partire dalla private key
-	r, s, _ := ecdsa.Sign(rand.Reader, t.senderPrivateKey, h[:])
-	return &utils.Signature{r, s}
-}
-
-func (t *Transaction) MarshalJSON() ([]byte, error) {
+// Json del wallet
+func (w *Wallet) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Sender    string  `json:"sender_blockchain_address"`
-		Recipient string  `json:"recipient_blockchain_address"`
-		Value     float32 `json:"value"`
+		PrivateKey        string `json:"private_key"`
+		PublicKey         string `json:"public_key"`
+		BlockchainAddress string `json:"blockchain_address"`
 	}{
-		Sender:    t.senderBloackchainAddress,
-		Recipient: t.recipientBlockchainAddress,
-		Value:     t.value,
+		PrivateKey:        w.PrivateKeyStr(),
+		PublicKey:         w.PublicKeyStr(),
+		BlockchainAddress: w.BlockchainAddress(),
 	})
 }
