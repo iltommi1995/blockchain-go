@@ -7,25 +7,28 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/iltommi1995/blockchain-go/pkg/blockchain/block"
-	"github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction"
+	blockchain_transaction "github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction"
 	"github.com/iltommi1995/blockchain-go/pkg/utils"
 )
 
 const (
-	MINING_DIFFICULTY = 4
+	MINING_DIFFICULTY = 3
 	MINING_SENDER     = "COINBASE TRANSACTION"
 	MINING_REWARD     = 1.0
+	MINING_TIMER_SEC  = 20
 )
 
 // Struct della blockchain
 type Blockchain struct {
-	transactionPool   []*transaction.Transaction
+	transactionPool   []*blockchain_transaction.Transaction
 	chain             []*block.Block
 	blockchainAddress string
 	port              uint16
+	mux               sync.Mutex
 }
 
 // Funzione per creare una nuova Blockchain
@@ -37,6 +40,10 @@ func NewBlockchain(blockchainAddress string, port uint16) *Blockchain {
 	bc.CreateBlock(0, b.Hash())
 	bc.port = port
 	return bc
+}
+
+func (bc *Blockchain) TransactionPool() []*blockchain_transaction.Transaction {
+	return bc.transactionPool
 }
 
 // Metodo per restituire in json la block
@@ -55,7 +62,7 @@ func (bc *Blockchain) CreateBlock(nonce int, previousHash [32]byte) *block.Block
 	// Si appende il blocco alla catena di blocchi
 	bc.chain = append(bc.chain, b)
 	// Si svuota il transaction pool
-	bc.transactionPool = []*transaction.Transaction{}
+	bc.transactionPool = []*blockchain_transaction.Transaction{}
 	return b
 }
 
@@ -76,13 +83,23 @@ func (bc *Blockchain) Print() {
 	}
 }
 
+// Metodo della blockchain per creare una transazione
+// ritorna un bool per verificare che AddTransaction sia andato a ubon fine
+func (bc *Blockchain) CreateTransaction(sender string, recipient string, value float32, senderPublicKey *ecdsa.PublicKey, s *utils.Signature) bool {
+	isTransacted := bc.AddTransaction(sender, recipient, value, senderPublicKey, s)
+
+	// TODO
+	// Sync
+	return isTransacted
+}
+
 // Metodo per aggiungere una transazione al transactionPool
 func (bc *Blockchain) AddTransaction(sender string, recipient string, value float32, senderPublicKey *ecdsa.PublicKey, s *utils.Signature) bool {
-	t := transaction.NewTransaction(sender, recipient, value)
+	t := blockchain_transaction.NewTransaction(sender, recipient, value)
 
 	// Se il sender è il miner, non va confermata la transazione
 	if sender == MINING_SENDER {
-		bc.transactionPool = append([]*transaction.Transaction{t}, bc.transactionPool...)
+		bc.transactionPool = append([]*blockchain_transaction.Transaction{t}, bc.transactionPool...)
 		return true
 	}
 
@@ -109,19 +126,19 @@ func (bc *Blockchain) AddTransaction(sender string, recipient string, value floa
 
 // Metodo per aggiungere una transazione al transactionPool
 func (bc *Blockchain) AddCoinbaseTransaction(sender string, recipient string, value float32) {
-	t := transaction.NewTransaction(sender, recipient, value)
-	bc.transactionPool = append([]*transaction.Transaction{t}, bc.transactionPool...)
+	t := blockchain_transaction.NewTransaction(sender, recipient, value)
+	bc.transactionPool = append([]*blockchain_transaction.Transaction{t}, bc.transactionPool...)
 }
 
 // Metodo per copiatre il transaction pool
-func (bc *Blockchain) CopyTransactionPool() []*transaction.Transaction {
+func (bc *Blockchain) CopyTransactionPool() []*blockchain_transaction.Transaction {
 	// Creo array di transazioni vuoto
-	transactions := make([]*transaction.Transaction, 0)
+	transactions := make([]*blockchain_transaction.Transaction, 0)
 	// Per ogni transazione nel transactionPool della blockchain
 	for _, t := range bc.transactionPool {
 		// Aggiungo all'array transactions la transazione
 		transactions = append(transactions,
-			transaction.NewTransaction(
+			blockchain_transaction.NewTransaction(
 				t.SenderBlockchainAddress,
 				t.RecipientBlockchainAddress,
 				t.Value))
@@ -133,11 +150,16 @@ func (bc *Blockchain) CopyTransactionPool() []*transaction.Transaction {
 // Metodo di *Blockchain per
 // Prende come parametri i dati di un blocco (nonce, previousHash, transactions[]) più la difficoltà
 // Ritorna true o false
-func (bc *Blockchain) ValidProof(nonce int, previousHash [32]byte, transactions []*transaction.Transaction, difficulty int) bool {
+func (bc *Blockchain) ValidProof(nonce int, previousHash [32]byte, transactions []*blockchain_transaction.Transaction, difficulty int) bool {
 	// In base alla difficoltà viene scelto il numero di zeri che deve avere l'hash del blocco'
 	zeros := strings.Repeat("0", difficulty)
 	// Blocco da indovinare
-	guessBlock := block.Block{time.Now().UnixNano(), nonce, previousHash, transactions}
+	guessBlock := block.Block{
+		Timestamp:    time.Now().UnixNano(),
+		Nonce:        nonce,
+		PreviousHash: previousHash,
+		Transactions: transactions,
+	}
 	// Hash del blocco
 	guessHashStr := fmt.Sprintf("%x", guessBlock.Hash())
 	if guessHashStr[:difficulty] == zeros {
@@ -168,6 +190,21 @@ func (bc *Blockchain) ProofOfWork() int {
 
 // Metodo di Blockchain per il mining
 func (bc *Blockchain) Mining() bool {
+	// Mutex permette di bloccare una parte di codice per far sì che
+	// venga eseguita da una sola goroutine alla volta
+	bc.mux.Lock()
+	// Con defer, sì fa si che l'esecuzione di uno statement sia
+	// differita fino al return della funzione
+	// In sostanza rendo sincrono ogni cosa che avviene
+	// dentro alla funzione di mining
+	defer bc.mux.Unlock()
+
+	// Se il transaction pool è vuoto, non mino il blocco
+	if len(bc.transactionPool) == 0 {
+		fmt.Println("**** Mining skipped because there are no transactions ****")
+		return false
+	}
+
 	// Creo transazione coinbasem passando i dati
 	bc.AddTransaction(MINING_SENDER, bc.blockchainAddress, MINING_REWARD, nil, nil)
 	// Creo il nonce
@@ -177,6 +214,11 @@ func (bc *Blockchain) Mining() bool {
 	bc.CreateBlock(nonce, previousHash)
 	log.Println("action=mining, status=success")
 	return true
+}
+
+func (bc *Blockchain) StartMining() {
+	bc.Mining()
+	_ = time.AfterFunc(time.Second*MINING_TIMER_SEC, bc.StartMining)
 }
 
 // Metodo per calcolare il bilancio di un account
@@ -213,7 +255,7 @@ func (bc *Blockchain) CalculateTotalAmount(blockchainAddress string) float32 {
 func (bc *Blockchain) VerifyTransactionSignature(
 	senderPublicKey *ecdsa.PublicKey,
 	s *utils.Signature,
-	t *transaction.Transaction) bool {
+	t *blockchain_transaction.Transaction) bool {
 	// Faccio json della transazione
 	m, _ := json.Marshal(t)
 	// Calcolo l'hash del json della transazione

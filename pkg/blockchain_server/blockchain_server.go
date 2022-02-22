@@ -7,7 +7,11 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/amount_response"
 	"github.com/iltommi1995/blockchain-go/pkg/blockchain/blockchain"
+	blockchain_transaction "github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction"
+	blockchain_transaction_request "github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction_request"
+	"github.com/iltommi1995/blockchain-go/pkg/utils"
 	"github.com/iltommi1995/blockchain-go/pkg/wallet/wallet"
 )
 
@@ -80,9 +84,162 @@ func (bcs *BlockchainServer) GetChain(w http.ResponseWriter, req *http.Request) 
 	}
 }
 
+// Resolver dell'endpoint "/transactions"
+func (bcs *BlockchainServer) Transactions(w http.ResponseWriter, req *http.Request) {
+	// Controllo il metodo
+	switch req.Method {
+	// Se è GET
+	case http.MethodGet:
+		w.Header().Add("Content-Type", "application/json")
+		bc := bcs.GetBloackchain()
+		transactions := bc.TransactionPool()
+		// Restituisco il json contenente il transaction pool della blockchain
+		// e il numero delle transazioni contenute nel transaction pool
+		m, _ := json.Marshal(struct {
+			Transactions []*blockchain_transaction.Transaction `json:"transactions"`
+			Length       int                                   `json:"length"`
+		}{
+			Transactions: transactions,
+			Length:       len(transactions),
+		})
+		io.WriteString(w, string(m[:]))
+	case http.MethodPost:
+		// Se è POST
+		// Decodifico il json del body della request
+		decoder := json.NewDecoder(req.Body)
+		// Creo una transaction request lato server
+		var t blockchain_transaction_request.TransactionRequest
+		// faccio il decode di t
+		err := decoder.Decode(&t)
+		// Se c'è un errore
+		if err != nil {
+			// Dico che è fallita la costruzione della transazione
+			log.Printf("ERROR: %v", err)
+			io.WriteString(w, string(utils.JsonStatus("fail")))
+			return
+		}
+		// Valido la Transaction Request, vedendo se ci sono tutti i dati
+		// necessari, se no do errore
+		if !t.Validate() {
+			log.Println("ERROR: missing field(s)")
+			io.WriteString(w, string(utils.JsonStatus("fail")))
+			return
+		}
+
+		// Prendo la publicKey e la trasformo da String a *ecdsa.PublicKey
+		publicKey := utils.PublicKeyFromString(*t.SenderPublicKey)
+		// Prendo la signature e la trasformo da String a utils.Signature
+		signature := utils.SignatureFromString(*t.Signature)
+
+		bc := bcs.GetBloackchain()
+
+		// Creo la transazione lato server
+		isCreated := bc.CreateTransaction(
+			*t.SenderBlockchainAddress,
+			*t.RecipientBlockchainAddress,
+			*t.Value,
+			publicKey,
+			signature,
+		)
+
+		w.Header().Add("Content-Type", "application/json")
+		// Creo una variabile m per la response
+		var m []byte
+		// Controllo se la transazione è stata creata correttamente
+		if !isCreated {
+			// Se no restituisco il messaggio di errore
+			w.WriteHeader(http.StatusBadRequest)
+			m = utils.JsonStatus("fail")
+		} else {
+			// Se sì restituisco il messaggio di successo
+			w.WriteHeader(http.StatusCreated)
+			m = utils.JsonStatus("success")
+		}
+		io.WriteString(w, string(m))
+	default:
+		// Se è un altro metodo
+		log.Println("ERROR: Invalid HTTP Method")
+		w.WriteHeader(http.StatusBadRequest)
+	}
+}
+
+// Resolver dell'endpoint "/mine"
+func (bcs *BlockchainServer) Mine(w http.ResponseWriter, req *http.Request) {
+	// Controllo il metodo HTTP
+	switch req.Method {
+	// Se è GET
+	case http.MethodGet:
+		bc := bcs.GetBloackchain()
+		// Effettuo il imining
+		isMined := bc.Mining()
+
+		// Controllo se il mining è avvenuto correttamente e creo la response
+		var m []byte
+		if !isMined {
+			w.WriteHeader(http.StatusBadRequest)
+			m = utils.JsonStatus("fail")
+		} else {
+			m = utils.JsonStatus("success")
+		}
+		w.Header().Add("Content-Type", "application/json")
+		io.WriteString(w, string(m))
+	// Se è un altro metodo
+	default:
+		log.Println("ERROR: Invalid HTTP Method")
+		w.WriteHeader(http.StatusBadRequest)
+	}
+}
+
+// Resolver dell'endpoint "/mine/start"
+// Serve ad automatizzare il processo di mining
+func (bcs *BlockchainServer) StartMine(w http.ResponseWriter, req *http.Request) {
+	// Controllo il metodo HTTP
+	switch req.Method {
+	// Se è GET
+	case http.MethodGet:
+		bc := bcs.GetBloackchain()
+		// Avvio il Mining
+		bc.StartMining()
+		// Costruisco la response
+		m := utils.JsonStatus("success")
+		w.Header().Add("Content-Type", "application/json")
+		io.WriteString(w, string(m))
+	// Se è un altro metodo
+	default:
+		log.Println("ERROR: Invalid HTTP Method")
+		w.WriteHeader(http.StatusBadRequest)
+	}
+}
+
+// Resolver dell'endpoint "/amount"
+func (bcs *BlockchainServer) Amount(w http.ResponseWriter, req *http.Request) {
+	// Controllo il metodo HTTP
+	switch req.Method {
+	// Se è GET
+	case http.MethodGet:
+		// Recupero il query param con il blockchain address
+		blockchainAddress := req.URL.Query().Get("blockchain_address")
+		// Recupero il bilancio
+		amount := bcs.GetBloackchain().CalculateTotalAmount(blockchainAddress)
+		// Preparo la risposta
+		ar := &amount_response.AmountResponse{Amount: amount}
+		m, _ := ar.MarshalJSON()
+		w.Header().Add("Content-Type", "application/json")
+		io.WriteString(w, string(m[:]))
+	// Se è un altro metodo
+	default:
+		log.Println("ERROR: Invalid HTTP Method")
+		w.WriteHeader(http.StatusBadRequest)
+	}
+}
+
 // Metodo per avviare il server
 func (bcs *BlockchainServer) Run() {
 	// Crea endpoint e associa resolver
 	http.HandleFunc("/", bcs.GetChain)
+	http.HandleFunc("/transactions", bcs.Transactions)
+	http.HandleFunc("/mine", bcs.Mine)
+	http.HandleFunc("/mine/start", bcs.StartMine)
+	http.HandleFunc("/amount", bcs.Amount)
 	log.Fatal(http.ListenAndServe("localhost:"+strconv.Itoa(int(bcs.Port())), nil))
 }

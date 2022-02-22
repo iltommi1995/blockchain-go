@@ -39,7 +39,10 @@ func (t *Transaction) GenerateSignature() *utils.Signature {
 	h := sha256.Sum256([]byte(m))
 	// Generiamo la signature a partire dalla private key
 	r, s, _ := ecdsa.Sign(rand.Reader, t.senderPrivateKey, h[:])
-	return &utils.Signature{r, s}
+	return &utils.Signature{
+		R: r,
+		S: s,
+	}
 }
 
 // Json della transazione
