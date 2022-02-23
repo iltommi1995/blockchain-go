@@ -1,25 +1,33 @@
 package blockchain
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/iltommi1995/blockchain-go/pkg/blockchain/block"
 	blockchain_transaction "github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction"
+	"github.com/iltommi1995/blockchain-go/pkg/blockchain/transaction_request"
 	"github.com/iltommi1995/blockchain-go/pkg/utils"
 )
 
 const (
-	MINING_DIFFICULTY = 3
-	MINING_SENDER     = "COINBASE TRANSACTION"
-	MINING_REWARD     = 1.0
-	MINING_TIMER_SEC  = 20
+	MINING_DIFFICULTY                 = 3
+	MINING_SENDER                     = "COINBASE TRANSACTION"
+	MINING_REWARD                     = 1.0
+	MINING_TIMER_SEC                  = 20
+	BLOCKCHAIN_PORT_RANGE_START       = 5000
+	BLOCKCHAIN_PORT_RANGE_END         = 5004
+	NEIGHBOR_IP_RANGE_START           = 0
+	NEIGHBOR_IP_RANGE_END             = 1
+	BLOCKCHAIN_NEIGHBOR_SYNC_TIME_SEC = 20
 )
 
 // Struct della blockchain
@@ -29,6 +37,16 @@ type Blockchain struct {
 	blockchainAddress string
 	port              uint16
 	mux               sync.Mutex
+	neighbors         []string
+	muxNeighbors      sync.Mutex
+}
+
+func (bc *Blockchain) Chain() []*block.Block {
+	return bc.chain
+}
+
+func (bc *Blockchain) Neighbors() []string {
+	return bc.neighbors
 }
 
 // Funzione per creare una nuova Blockchain
@@ -37,32 +55,95 @@ func NewBlockchain(blockchainAddress string, port uint16) *Blockchain {
 	b := &block.Block{}
 	bc := new(Blockchain)
 	bc.blockchainAddress = blockchainAddress
-	bc.CreateBlock(0, b.Hash())
+	bc.CreateBlock(0, 0, b.Hash())
 	bc.port = port
 	return bc
 }
 
+func (bc *Blockchain) SetNeighbors() {
+	bc.neighbors = utils.FindNeighbors(
+		"127.0.0.1",
+		bc.port,
+		NEIGHBOR_IP_RANGE_START,
+		NEIGHBOR_IP_RANGE_END,
+		BLOCKCHAIN_PORT_RANGE_START,
+		BLOCKCHAIN_PORT_RANGE_END,
+	)
+	log.Printf("%v", bc.neighbors)
+}
+
+func (bc *Blockchain) Run() {
+	log.Println("Finding neighbors...")
+	bc.StartSyncNeighbors()
+	log.Println("Sync blockchain with neighbors...")
+	bc.ResolveConflicts()
+	log.Println("Activating mining...")
+	bc.StartMining()
+}
+
+func (bc *Blockchain) SyncNeighbors() {
+	bc.muxNeighbors.Lock()
+	defer bc.muxNeighbors.Unlock()
+	bc.SetNeighbors()
+}
+
+func (bc *Blockchain) StartSyncNeighbors() {
+	bc.SyncNeighbors()
+	_ = time.AfterFunc(time.Second*BLOCKCHAIN_NEIGHBOR_SYNC_TIME_SEC, bc.StartSyncNeighbors)
+}
+
+// Getter del transaction pool
 func (bc *Blockchain) TransactionPool() []*blockchain_transaction.Transaction {
 	return bc.transactionPool
+}
+
+func (bc *Blockchain) ClearTransactionPool() {
+	bc.transactionPool = bc.transactionPool[:0]
 }
 
 // Metodo per restituire in json la block
 func (bc *Blockchain) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Blocks []*block.Block `json:"chains"`
+		Blocks []*block.Block `json:"chain"`
 	}{
 		Blocks: bc.chain,
 	})
 }
 
+func (bc *Blockchain) UnmarshalJSON(data []byte) error {
+	v := &struct {
+		Blocks *[]*block.Block `json:"chain"`
+	}{
+		Blocks: &bc.chain,
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Metodo di Blockchain, utilizzato per cerare un nuovo blocco, ritorna un puntatore a Block
-func (bc *Blockchain) CreateBlock(nonce int, previousHash [32]byte) *block.Block {
+func (bc *Blockchain) CreateBlock(timestamp int64, nonce int, previousHash [32]byte) *block.Block {
+
 	// Viene passato il transaction pool per le transazioni
-	b := block.NewBlock(nonce, previousHash, bc.transactionPool)
+	b := block.NewBlock(timestamp, nonce, previousHash, bc.transactionPool)
+	if len(bc.chain) == 0 {
+		log.Println("First block of the chain created...")
+		b = block.FirstBlock(nonce, previousHash, bc.transactionPool)
+	}
 	// Si appende il blocco alla catena di blocchi
 	bc.chain = append(bc.chain, b)
 	// Si svuota il transaction pool
 	bc.transactionPool = []*blockchain_transaction.Transaction{}
+
+	for _, n := range bc.neighbors {
+		endpoint := fmt.Sprintf("http://%s/transactions", n)
+		client := &http.Client{}
+		req, _ := http.NewRequest("DELETE", endpoint, nil)
+		resp, _ := client.Do(req)
+		log.Printf("%v", resp)
+	}
+
 	return b
 }
 
@@ -88,8 +169,27 @@ func (bc *Blockchain) Print() {
 func (bc *Blockchain) CreateTransaction(sender string, recipient string, value float32, senderPublicKey *ecdsa.PublicKey, s *utils.Signature) bool {
 	isTransacted := bc.AddTransaction(sender, recipient, value, senderPublicKey, s)
 
-	// TODO
-	// Sync
+	// PARTE DA COMMENTARE
+	if isTransacted {
+		for _, n := range bc.neighbors {
+			publicKeyStr := fmt.Sprintf("%064x%064x", senderPublicKey.X.Bytes(), senderPublicKey.Y.Bytes())
+			signatureStr := s.String()
+			bt := &transaction_request.TransactionRequest{
+				SenderBlockchainAddress:    &sender,
+				RecipientBlockchainAddress: &recipient,
+				SenderPublicKey:            &publicKeyStr,
+				Value:                      &value,
+				Signature:                  &signatureStr,
+			}
+			m, _ := json.Marshal(bt)
+			buf := bytes.NewBuffer(m)
+			endpoint := fmt.Sprintf("http://%s/transactions", n)
+			client := &http.Client{}
+			req, _ := http.NewRequest("PUT", endpoint, buf)
+			resp, _ := client.Do(req)
+			log.Printf("%v", resp)
+		}
+	}
 	return isTransacted
 }
 
@@ -107,12 +207,12 @@ func (bc *Blockchain) AddTransaction(sender string, recipient string, value floa
 	if bc.VerifyTransactionSignature(senderPublicKey, s, t) {
 		// Controllo che il sender abbia i soldi che invia
 		/*
-			if bc.CalculateTotalAmount(sender) < value {
-				// In caso negativo do errore
-				log.Println("ERROR: transaction rejected because sender doasn't have enough balance in wallet")
-				return false
-			}
-		*/
+		 */
+		if bc.CalculateTotalAmount(sender) < value {
+			// In caso negativo do errore
+			log.Println("ERROR: transaction rejected because sender doasn't have enough balance in wallet")
+			return false
+		}
 		// Aggiungi la transazione al transaction Pool
 		bc.transactionPool = append(bc.transactionPool, t)
 		return true
@@ -150,20 +250,20 @@ func (bc *Blockchain) CopyTransactionPool() []*blockchain_transaction.Transactio
 // Metodo di *Blockchain per
 // Prende come parametri i dati di un blocco (nonce, previousHash, transactions[]) più la difficoltà
 // Ritorna true o false
-func (bc *Blockchain) ValidProof(nonce int, previousHash [32]byte, transactions []*blockchain_transaction.Transaction, difficulty int) bool {
+func (bc *Blockchain) ValidProof(timestamp int64, nonce int, previousHash [32]byte, transactions []*blockchain_transaction.Transaction, difficulty int) bool {
 	// In base alla difficoltà viene scelto il numero di zeri che deve avere l'hash del blocco'
 	zeros := strings.Repeat("0", difficulty)
 	// Blocco da indovinare
 	guessBlock := block.Block{
-		Timestamp:    time.Now().UnixNano(),
+		Timestamp:    timestamp,
 		Nonce:        nonce,
 		PreviousHash: previousHash,
 		Transactions: transactions,
 	}
 	// Hash del blocco
 	guessHashStr := fmt.Sprintf("%x", guessBlock.Hash())
-	if guessHashStr[:difficulty] == zeros {
 
+	if guessHashStr[:difficulty] == zeros {
 		fmt.Println(guessHashStr)
 	}
 	// Si controlla se gli n caratteri (dove n è la difficoltà) all'inizio dell'hash sono uguale agli zeros definiti prima
@@ -171,19 +271,19 @@ func (bc *Blockchain) ValidProof(nonce int, previousHash [32]byte, transactions 
 }
 
 // Metodo per *Blockchain, ritorna un int, il nonce
-func (bc *Blockchain) ProofOfWork() int {
+func (bc *Blockchain) ProofOfWork(timestamp int64) int {
 	// Si crea la copia delle transazioni del transaction pool
 	transactions := bc.CopyTransactionPool()
 	// Si recupera l'hash del blocco precedente
 	previousHash := bc.LastBlock().Hash()
-	fmt.Println(previousHash)
 	// Si parte da nonce = 0
 	nonce := 0
 	// Si calcola l'hash del nuovo blocco richiamando il metodo ValidProof, se non ritorna
 	// true si aumenta di 1 il nonce e si riprova, fin quando il target non viene raggiunto
-	for !bc.ValidProof(nonce, previousHash, transactions, MINING_DIFFICULTY) {
+	for !bc.ValidProof(timestamp, nonce, previousHash, transactions, MINING_DIFFICULTY) {
 		nonce += 1
 	}
+	log.Println("Nonce found!")
 
 	return nonce
 }
@@ -200,19 +300,33 @@ func (bc *Blockchain) Mining() bool {
 	defer bc.mux.Unlock()
 
 	// Se il transaction pool è vuoto, non mino il blocco
-	if len(bc.transactionPool) == 0 {
-		fmt.Println("**** Mining skipped because there are no transactions ****")
-		return false
-	}
+	/*
+		Commento questa parte, così si può minare anche senza transazioni
+		if len(bc.transactionPool) == 0 {
+			fmt.Println("**** Mining skipped because there are no transactions ****")
+			return false
+		}
 
+	*/
+	// Tempo
+	timestamp := time.Now().UnixNano()
 	// Creo transazione coinbasem passando i dati
 	bc.AddTransaction(MINING_SENDER, bc.blockchainAddress, MINING_REWARD, nil, nil)
 	// Creo il nonce
-	nonce := bc.ProofOfWork()
+	log.Println("Start mining...")
+	nonce := bc.ProofOfWork(timestamp)
 	// Creo il nuovo blocco
 	previousHash := bc.LastBlock().Hash()
-	bc.CreateBlock(nonce, previousHash)
+	bc.CreateBlock(timestamp, nonce, previousHash)
 	log.Println("action=mining, status=success")
+
+	for _, n := range bc.neighbors {
+		endpoint := fmt.Sprintf("http://%s/consensus", n)
+		client := &http.Client{}
+		req, _ := http.NewRequest("PUT", endpoint, nil)
+		resp, _ := client.Do(req)
+		log.Printf("%v", resp)
+	}
 	return true
 }
 
@@ -244,6 +358,58 @@ func (bc *Blockchain) CalculateTotalAmount(blockchainAddress string) float32 {
 		}
 	}
 	return totalAmount
+}
+
+func (bc *Blockchain) ValidChain(chain []*block.Block) bool {
+	log.Println("Validating blockchain...")
+
+	preBlock := chain[0]
+	currentIndex := 1
+	for currentIndex < len(chain) {
+		// PREVIOUS HASH NON FUNZIONA
+		b := chain[currentIndex]
+
+		if b.PreviousHash != preBlock.Hash() {
+			return false
+		}
+
+		if !bc.ValidProof(b.Timestamp, b.Nonce, b.PreviousHash, b.Transactions, MINING_DIFFICULTY) {
+			return false
+		}
+		preBlock = b
+		currentIndex += 1
+	}
+	return true
+}
+
+func (bc *Blockchain) ResolveConflicts() bool {
+	var longestChain []*block.Block = nil
+	maxLength := len(bc.chain)
+
+	for _, n := range bc.neighbors {
+		endpoint := fmt.Sprintf("http://%s/chain", n)
+		resp, _ := http.Get(endpoint)
+		if resp.StatusCode == 200 {
+			var bcResp Blockchain
+			decoder := json.NewDecoder(resp.Body)
+			_ = decoder.Decode(&bcResp)
+
+			chain := bcResp.Chain()
+
+			if len(chain) > maxLength && bc.ValidChain(chain) {
+				maxLength = len(chain)
+				longestChain = chain
+			}
+		}
+	}
+
+	if longestChain != nil {
+		bc.chain = longestChain
+		log.Printf("Resolve conflicts replaced")
+		return true
+	}
+	log.Printf("Resolve conflicts not replaced")
+	return false
 }
 
 // Metodo per verificare la signature di una transazione
